@@ -1,0 +1,9 @@
+node_modules/
+dist/
+.env
+runtime/
+secrets/
+backups/
+coverage/
+*.log
+.DS_Store

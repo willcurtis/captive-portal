@@ -1,104 +1,223 @@
-# Captive Portal for UDM / UniFi OS
+# The Tech Shed UniFi Captive Portal
 
-A simple click-through WiFi captive portal for UniFi Dream Machine (UDM) / UniFi OS devices.  
-No external PHP libraries required—uses PHP’s built-in cURL extension to log in and authorize guests via the UDM `/proxy/network` API.
+A secure, self-hosted external captive portal for UniFi Network. It uses the official Network Integration API and API-key authentication, with a branded mobile-first interface and a Docker-based installer.
 
 ## Features
 
-- Click-through splash page (“Connect to WiFi”)  
-- Authorize guest device MAC for a configurable duration  
-- Modern, responsive styling with Google Fonts  
-- Configuration via a simple PHP `config.php`  
-- Served under Apache with a `/frontend` alias for assets  
-- Supports UDM’s self-signed certificate by default (SSL verify disabled)
+- Official `AUTHORIZE_GUEST_ACCESS` workflow
+- Short-lived signed transactions and CSRF protection
+- MAC address, guest state, SSID and optional source-IP validation
+- Idempotent handling for captive-browser duplicate submissions
+- Configurable authorization, data and bandwidth limits
+- Strict controller TLS validation with private CA or pinned-certificate support
+- HTTPS through public ACME, Mail-in-a-Box DNS-01, or supplied certificates
+- Read-only container filesystem, dropped Linux capabilities and no-new-privileges
+- Local assets, structured redacted logs, health checks, tests and CI
 
-## Repository Structure
+## Deployment architecture
 
+```text
+Guest device (Guest VLAN / Hotspot zone)
+        |
+        | HTTP captive redirect
+        v
+Caddy :80/:443  --->  Portal container :3000
+        |                   |
+        | ACME/certificate  | HTTPS + dedicated API key
+        v                   v
+Authoritative DNS      UniFi Integration API
 ```
-captive-portal/
-├── backend/
-│   └── php/
-│       ├── config.php            ← Installer-generated UDM/API settings
-│       ├── index.php             ← Captive portal logic & splash page
-│       └── frontend/
-│           ├── css/
-│           │   └── styles.css     ← Modern splash page CSS
-│           └── img/
-│               └── background.jpg ← Your custom background image
-└── install.sh                    ← Automated installer script
+
+The portal should be on a stable internal address. Guest devices reach only TCP 80/443 on that address before authorization. The guest SSID belongs on a dedicated routed VLAN in UniFi's Hotspot firewall zone—not on the portal server's native LAN.
+
+## Supported host
+
+- A current Debian or Ubuntu server with a static IPv4 address
+- Docker Engine and Docker Compose v2 already installed and running
+- Git, curl, OpenSSL and Python 3
+- Inbound TCP 80/443 to the portal address
+- Outbound HTTPS from the portal to the UniFi Console
+- A UniFi Network release exposing **Control Plane → Integrations**
+
+The installer does not install Docker or alter the host firewall. Those are host-level security decisions and should remain explicit.
+
+## Quick installation
+
+Clone directly into the intended production location:
+
+```bash
+sudo git clone https://github.com/willcurtis/captive-portal.git /opt/unifi-captive-portal
+cd /opt/unifi-captive-portal
+sudo ./install.sh
 ```
 
-## Prerequisites
+The interactive installer:
 
-- Ubuntu 20.04+ or Debian 10+  
-- Apache2 with `mod_rewrite` & `mod_headers`  
-- PHP 7.4+ with `php-curl`  
-- UDM / UniFi OS device reachable on your network  
+1. Validates dependencies and the Docker daemon.
+2. Collects the portal address, UniFi API endpoint, SSID and certificate mode.
+3. Validates the controller certificate before sending the API key.
+4. Discovers the site UUID automatically when the controller has one site.
+5. Checks that the API key can read clients for that site.
+6. Creates root-protected runtime configuration and container-readable secrets.
+7. Builds, starts and smoke-tests the HTTPS deployment.
 
-## Installation
+Run it again to change configuration. Existing `.env`, `secrets/` and `runtime/` content is copied into a timestamped, root-only `backups/` directory first.
 
-1. **Clone or copy** this repo to your server:
-   ```bash
-   git clone https://github.com/your-org/captive-portal.git /var/www/html/captive-portal
-   cd /var/www/html/captive-portal
-   ```
+## Certificate modes
 
-2. **Run the installer**:
-   ```bash
-   sudo chmod +x install.sh
-   sudo ./install.sh
-   ```
-   You’ll be prompted for:
-   - Portal domain or IP (e.g. `portal.example.com`)  
-   - UDM host & port (e.g. `192.168.1.1`, port `443`)  
-   - UniFi “Site” (usually `default`)  
-   - UniFi API username & password  
-   - Voucher duration in minutes (default `60`)  
+### `public-acme`
 
-3. **Add your background image**:
-   ```bash
-   sudo cp <your-image>.jpg backend/php/frontend/img/background.jpg
-   sudo chown www-data:www-data backend/php/frontend/img/background.jpg
-   ```
+Caddy obtains a certificate using normal ACME HTTP-01/TLS-ALPN validation.
 
-4. **Verify Apache**:
-   ```bash
-   sudo systemctl status apache2
-   ```
+Use when:
 
-5. **Configure UniFi Guest Control → External Portal URL**:
-   ```
-   http://<your-portal-domain>/guest/s/default/
-   ```
+- The portal hostname resolves publicly to an address forwarded to the portal.
+- The certificate authority can reach TCP 80 or 443 from the internet.
 
-## Customization
+This is the simplest mode but is usually unsuitable when the DNS record points only to an RFC 1918 address.
 
-- **Background Image**: Replace `backend/php/frontend/img/background.jpg`.  
-- **Styling**: Edit `backend/php/frontend/css/styles.css`.  
-- **Voucher Duration**: Adjust the `duration` value in `backend/php/config.php`.  
-- **SSL Verification**: Toggle `'verify_ssl'` in `backend/php/config.php`.
+### `mailinabox-dns01`
 
-## How It Works
+Caddy uses a dedicated Mail-in-a-Box automation account to create DNS-01 challenge records. The password is stored only in `secrets/miab-password`, never in `.env` or Git.
 
-1. **Splash Page**  
-   Visitor sees a “Welcome! Click Connect” page.  
-2. **Click-Through**  
-   On form submit, `index.php`:
-   - Logs in via `/proxy/network/api/auth/login`  
-   - Sends an `authorize-guest` command to  
-     `/proxy/network/api/s/<site>/cmd/stamgr`  
-   - Redirects back to the original URL  
-3. **Session**  
-   UDM grants network access for the configured duration.
+Use when:
 
-## Security & Permissions
+- The portal uses a publicly registered name with a private/internal address.
+- Mail-in-a-Box is authoritative for the zone.
+- A restricted automation account is available.
 
-- All files under `/var/www/html/captive-portal` are owned by `www-data:www-data`.  
-- CSS & image assets are `644`, directories `755`.  
-- SSL verification disabled by default; enable by setting `'verify_ssl' => true` in `backend/php/config.php`.
+Restrict the account and API path as far as Mail-in-a-Box permits. Do not use a personal mailbox administrator credential.
+
+### `manual`
+
+The installer copies a supplied full-chain certificate and private key into protected Docker secrets. It validates certificate parsing, hostname coverage and public-key matching before deployment.
+
+Use when:
+
+- Certificates come from an internal public key infrastructure (PKI), enterprise ACME client, or separate automation system.
+- All guest devices trust the issuing certificate authority.
+
+Renewal is external in this mode. Re-run the installer after replacing the source certificate, or atomically replace the two secret files and recreate Caddy.
+
+Never deploy a self-signed leaf certificate to unmanaged guest devices; captive network assistants will reject it.
+
+## Controller certificate trust
+
+For a publicly trusted UniFi certificate, leave the controller certificate path blank.
+
+For a private controller certificate, supply either:
+
+- the private CA certificate or chain, preferably; or
+- the exact controller leaf certificate as a deliberate pin.
+
+The installer uses OpenSSL hostname verification and partial-chain validation before making authenticated API requests. The application does not provide an option to disable TLS verification.
+
+## UniFi configuration
+
+Create a dedicated Integration API key in **Network → Control Plane → Integrations**. Store it in a temporary root-readable file for installation or paste it at the hidden prompt. Delete the temporary source after installation.
+
+Recommended controller configuration:
+
+- Dedicated guest VLAN and DHCP scope
+- Network assigned to the built-in **Hotspot** firewall zone
+- SSID security set appropriately for the venue
+- **Hotspot Portal → Captive Portal** enabled
+- Client isolation enabled
+- External portal server set to the portal server IPv4 address
+- Pre-authorization access limited to the portal IPv4 address and hostname
+
+The resulting external path is:
+
+```text
+https://wifi.example.com/guest/s/default/
+```
+
+The API site UUID and external portal site slug are separate values. The UUID is discovered from `/integration/v1/sites`; the slug is usually `default`.
+
+## Runtime files and permissions
+
+The following are intentionally excluded from Git:
+
+```text
+.env                         root:root 0600
+runtime/Caddyfile            root:root 0444
+secrets/unifi-api-key        10001:10001 0400
+secrets/cookie-secret        10001:10001 0400
+secrets/unifi-ca.pem         10001:10001 0444
+secrets/miab-password        root:root 0400
+secrets/tls-cert.pem         root:root 0444
+secrets/tls-key.pem          root:root 0400
+```
+
+Docker Compose mounts them through its secrets mechanism. Do not copy secrets into images, commit them, place them in shell history, or pass them as command-line arguments.
+
+## Verification
+
+```bash
+cd /opt/unifi-captive-portal
+sudo ./scripts/verify.sh
+sudo docker compose logs --since=10m portal caddy
+```
+
+Then verify with a real device:
+
+1. Join the guest SSID and receive an address from the guest VLAN.
+2. Open an HTTP site to trigger captive detection.
+3. Accept the terms and connect.
+4. Confirm the success page and general DNS/HTTPS browsing.
+5. Confirm the client becomes `GUEST` and `authorized: true` in UniFi.
+6. Confirm guest-to-guest and guest-to-internal access remain blocked.
+
+Test current iOS, Android, macOS and Windows captive network assistants before production launch.
+
+## Updating and rollback
+
+```bash
+cd /opt/unifi-captive-portal
+sudo ./scripts/update.sh
+```
+
+The update script refuses to overwrite tracked local changes, uses `git pull --ff-only`, rebuilds the images and waits for health. If the new portal does not become healthy, it retags the previous portal and Caddy images and recreates the prior containers.
+
+Configuration backups are under `backups/`. They contain secrets and must remain root-only. Include `.env`, `runtime/`, `secrets/` and the Caddy data Docker volume in an encrypted operational backup. Test restoration periodically.
+
+## Deployment checklist
+
+Before release:
+
+- [ ] CI, type-check, tests, production build and dependency audit pass
+- [ ] Terms of Use and Privacy Notice are approved for the venue
+- [ ] Dedicated API key has only the required scope
+- [ ] Controller and portal certificate chains validate with correct hostnames
+- [ ] DNS resolves consistently from guest and management networks
+- [ ] Guest VLAN, DHCP, DNS, NTP, NAT and Hotspot policies are verified
+- [ ] Pre-authorization rules expose only the portal and required infrastructure
+- [ ] API-key and certificate rotation have been tested
+- [ ] Encrypted backup and rollback procedure have been tested
+
+Rollback triggers include failed authorization, HTTPS errors, loss of guest internet access, unexpected access to internal networks, or a sustained unhealthy container state.
+
+## Local development
+
+```bash
+npm ci
+npm run typecheck
+npm test
+npm run build
+```
+
+Unit tests do not contact a controller. Use an isolated SSID and test hostname for end-to-end testing.
+
+## Health and logging
+
+- `GET /health/live` verifies the process is serving.
+- `GET /health/ready` verifies initialization without querying UniFi on every probe.
+- Authorization logs contain a client ID, SSID and only the final two MAC octets.
+- Cookies and CSRF tokens are redacted.
+- Caddy access logging is disabled to avoid recording redirect query strings containing client MAC addresses.
+
+Forward container logs to a protected log platform with an appropriate retention policy. Never enable broad request logging without redacting captive redirect parameters.
 
 ## License
 
-Released under the [MIT License](LICENSE).  
-
-Enjoy your new captive portal! Contributions and issues are welcome.
+[MIT](LICENSE)

@@ -1,0 +1,12 @@
+http://{$PORTAL_BIND_IP} {
+  redir https://{$PORTAL_DOMAIN}{uri} permanent
+}
+
+{$PORTAL_DOMAIN} {
+  encode zstd gzip
+  reverse_proxy portal:3000
+  header {
+    -Server
+    Permissions-Policy "camera=(), microphone=(), geolocation=()"
+  }
+}
