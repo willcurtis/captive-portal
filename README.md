@@ -2,6 +2,18 @@
 
 A secure, self-hosted external captive portal for UniFi Network. It uses the official Network Integration API and API-key authentication, with a branded mobile-first interface and a Docker-based installer.
 
+## Portal experience
+
+| Welcome and consent | Connected |
+|:---:|:---:|
+| <img src="docs/screenshots/welcome.png" alt="The Tech Shed guest WiFi welcome page in the iOS captive portal assistant" width="360"> | <img src="docs/screenshots/connected.png" alt="The Tech Shed guest WiFi connected confirmation in the iOS captive portal assistant" width="360"> |
+
+After authorization, iOS can also display its native captive-network success response before closing the assistant:
+
+<p align="center">
+  <img src="docs/screenshots/apple-captive-success.png" alt="Native iOS captive network success response" width="360">
+</p>
+
 ## Features
 
 - Official `AUTHORIZE_GUEST_ACCESS` workflow
