@@ -1,0 +1,23 @@
+http://{$PORTAL_BIND_IP} {
+  redir https://{$PORTAL_DOMAIN}{uri} permanent
+}
+
+{$PORTAL_DOMAIN} {
+  tls {
+    dns mailinabox {
+      api_url {env.MIAB_API_URL}
+      email_address {env.MIAB_EMAIL}
+      password {env.MIAB_PASSWORD}
+    }
+    resolvers {$ACME_DNS_RESOLVER}
+    propagation_delay 20s
+    propagation_timeout -1
+  }
+
+  encode zstd gzip
+  reverse_proxy portal:3000
+  header {
+    -Server
+    Permissions-Policy "camera=(), microphone=(), geolocation=()"
+  }
+}

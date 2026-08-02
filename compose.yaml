@@ -1,0 +1,65 @@
+services:
+  portal:
+    build: .
+    restart: unless-stopped
+    env_file: .env
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m,mode=1777
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    secrets:
+      - unifi_api_key
+      - unifi_ca
+      - cookie_secret
+    networks:
+      - portal
+
+  caddy:
+    build:
+      context: .
+      dockerfile: Dockerfile.caddy
+    restart: unless-stopped
+    depends_on:
+      portal:
+        condition: service_healthy
+    environment:
+      PORTAL_DOMAIN: ${PORTAL_DOMAIN}
+      PORTAL_BIND_IP: ${PORTAL_BIND_IP}
+      MIAB_API_URL: ${MIAB_API_URL}
+      MIAB_EMAIL: ${MIAB_EMAIL}
+      ACME_DNS_RESOLVER: ${ACME_DNS_RESOLVER}
+    ports:
+      - "${PORTAL_BIND_IP}:80:80"
+      - "${PORTAL_BIND_IP}:443:443"
+    volumes:
+      - ./runtime/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    networks:
+      - portal
+    secrets:
+      - miab_password
+      - tls_cert
+      - tls_key
+
+networks:
+  portal:
+volumes:
+  caddy_data:
+  caddy_config:
+secrets:
+  unifi_api_key:
+    file: ./secrets/unifi-api-key
+  unifi_ca:
+    file: ./secrets/unifi-ca.pem
+  miab_password:
+    file: ./secrets/miab-password
+  cookie_secret:
+    file: ./secrets/cookie-secret
+  tls_cert:
+    file: ./secrets/tls-cert.pem
+  tls_key:
+    file: ./secrets/tls-key.pem
